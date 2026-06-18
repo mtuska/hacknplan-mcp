@@ -41,6 +41,17 @@ The refresh only touches a skill copy this package installed (tracked by a
 `.installed-by.json` marker), so your own edits to other skills are never
 affected. Pass `--skip-skill` to register the MCP server without the skill.
 
+> **Updating from a version before the skill existed (≤ 0.2.0):** the auto-sync
+> is update-only — it refreshes a skill it previously installed, but does not
+> create one. If you installed the MCP server before the skill shipped (v0.3.0),
+> re-run `install` once to add it:
+>
+> ```bash
+> npx -y @mtuska/hacknplan-mcp install --global
+> ```
+>
+> After that, every later upgrade auto-updates it on the next server launch.
+
 ### Getting an API key
 
 HacknPlan → your avatar → **Settings → API → Create**. Tick the scopes you need.
