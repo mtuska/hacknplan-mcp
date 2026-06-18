@@ -1,6 +1,6 @@
 {
   "name": "@mtuska/hacknplan-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Model Context Protocol (MCP) server for the HacknPlan project-management API, with a cross-project portfolio dashboard. Built for Claude.",
   "license": "MIT",
   "author": "Montana Tuska",

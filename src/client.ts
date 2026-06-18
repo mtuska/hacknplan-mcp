@@ -13,6 +13,8 @@ export const BASE_URL = "https://api.hacknplan.com/v0";
 const MIN_INTERVAL_MS = 220; // >=5 req/s headroom (limit is 5/s per IP)
 const MAX_RETRIES = 4;
 const RETRY_BACKOFF_MS = [500, 1000, 2000, 4000];
+const RETRY_JITTER_MS = 250; // random spread added to each backoff
+const RETRY_AFTER_CAP_MS = 60_000; // never honor an absurd Retry-After
 const TIMEOUT_MS = 30_000;
 
 export type Json = unknown;
@@ -45,6 +47,27 @@ export class HacknPlanError extends Error {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Exponential backoff for `attempt` (0-based) with a little random jitter. */
+function backoffMs(attempt: number): number {
+  const base = RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)];
+  return base + Math.floor(Math.random() * RETRY_JITTER_MS);
+}
+
+/**
+ * Wait implied by a `Retry-After` header, in ms, or null if absent/unparseable.
+ * Supports both the delta-seconds form (`Retry-After: 5`) and the HTTP-date
+ * form (`Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`).
+ */
+function retryAfterMs(resp: Response): number | null {
+  const h = resp.headers.get("retry-after");
+  if (!h) return null;
+  const secs = Number(h.trim());
+  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+  const when = Date.parse(h);
+  if (!Number.isNaN(when)) return Math.max(0, when - Date.now());
+  return null;
+}
 
 /**
  * Thin async wrapper. One instance per server process; serializes calls through
@@ -137,7 +160,7 @@ export class HacknPlanClient {
 
       if (resp === null) {
         if (attempt < MAX_RETRIES) {
-          await sleep(RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)]);
+          await sleep(backoffMs(attempt));
           continue;
         }
         throw new HacknPlanError(0, `network error: ${String(lastErr)}`, method, path);
@@ -145,7 +168,15 @@ export class HacknPlanClient {
 
       if (resp.status === 429 || resp.status >= 500) {
         if (attempt < MAX_RETRIES) {
-          await sleep(RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)]);
+          // On 429 honor the server's Retry-After if it asks for longer than our
+          // own backoff (capped); otherwise fall back to exponential backoff.
+          let wait = backoffMs(attempt);
+          if (resp.status === 429) {
+            const ra = retryAfterMs(resp);
+            if (ra !== null) wait = Math.min(Math.max(ra, wait), RETRY_AFTER_CAP_MS);
+          }
+          await resp.body?.cancel().catch(() => {}); // drain so the socket can be reused
+          await sleep(wait);
           continue;
         }
       }

@@ -86,21 +86,31 @@ HACKNPLAN_GROUPS='{"Products":["Website","Mobile App"],"Ops":["Infra"]}'
 
 ## Tools
 
-59 tools across the HacknPlan surface. Highlights:
+75 tools across the HacknPlan surface. Highlights:
 
 - **Read/introspect** — `hacknplan_whoami`, `list_projects`, `get_project`,
-  `list_work_items`, `get_work_item`, `list_stages`/`categories`/`tags`/
-  `boards`/`milestones`/`importance_levels`.
-- **Work items** — `create_work_item`, `update_work_item`, `delete_work_item`,
-  `add_comment`, sub-tasks (`add_subtask`, `list_subtasks`, `update_subtask`,
-  `delete_subtask`), `attach_tag`/`detach_tag`, `assign_user`/`unassign_user`.
+  `list_work_items` (rich server-side filters), `get_work_item`,
+  `list_stages`/`categories`/`tags`/`boards`/`milestones`/`importance_levels`.
+- **Search & focus** — `find_work_items` (free-text + facet search to resolve a
+  task by name into its id) and `my_work` (what's assigned to you, per-project
+  or across all).
+- **Work items** — `create_work_item` (with story→task `parent_id`, assignees,
+  dependencies, checklists), `update_work_item` (re-stage / re-prioritize /
+  recategorize / re-estimate / reassign / move board·milestone), `plan_feature`
+  (create a user story + child tasks + checklists in one call),
+  `delete_work_item`, `add_comment`, sub-tasks, tags, user assignment.
 - **Planning** — `create_project`/`update_project`/`delete_project`,
-  stages, categories, tags, importance levels, `create_board`/`close_board`,
-  `create_milestone`, dependencies (`add_dependency`/`remove_dependency`).
-- **Time & metrics** — `log_work`, `list_work_logs`, `get_project_metrics`,
-  `get_milestone_metrics`.
-- **Design model** — `*_design_element` and `*_design_element_type` for the
-  feature/knowledge tree.
+  stages, categories, tags, importance levels, boards
+  (`create_board`/`update_board`/`close_board`/`reopen_board`), milestones
+  (`create_milestone`/`update_milestone`/`delete_milestone`), dependencies.
+- **Lifecycle** — non-destructive archive/release via
+  `close_project`/`reopen_project` and `close_milestone`/`reopen_milestone`.
+- **Activity & metrics** — `recent_activity` (the "what changed this week" /
+  standup feed), `log_work`, `list_work_logs`, `get_project_metrics`,
+  `get_milestone_metrics`, `get_board_metrics` (sprint burndown).
+- **Design model** — `*_design_element`/`*_design_element_type`, plus
+  `get_design_element_metrics` and design-element comments
+  (`list`/`add_design_element_comment`) for the feature/knowledge tree.
 - **Portfolio (cross-project)** — `portfolio_overview` (completion %, urgent /
   blocked / due-soon / overdue across all projects) and `schedule_overview` (a
   deadline countdown bucketed by horizon).

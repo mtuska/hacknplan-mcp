@@ -140,41 +140,65 @@ export function buildServer(hp: HacknPlanClient): McpServer {
 
   tool(
     "list_boards",
-    "List a project's boards (sprints/kanban boards). The default is 'Sprint 1'.",
-    { project_id: z.number().int(), format: FORMAT },
-    async ({ project_id, format }) =>
-      formatList(list(await hp.get(`/projects/${project_id}/boards`)), "boards", format),
+    "List a project's boards (sprints/kanban boards). The default is 'Sprint 1'. Closed boards are hidden unless include_closed=true.",
+    { project_id: z.number().int(), include_closed: z.boolean().default(false), format: FORMAT },
+    async ({ project_id, include_closed, format }) =>
+      formatList(
+        list(await hp.get(`/projects/${project_id}/boards`, { includeClosed: include_closed })),
+        "boards",
+        format,
+      ),
   );
 
   tool(
     "list_milestones",
-    "List a project's milestones (release/epic groupings).",
-    { project_id: z.number().int(), format: FORMAT },
-    async ({ project_id, format }) =>
-      formatList(list(await hp.get(`/projects/${project_id}/milestones`)), "milestones", format),
+    "List a project's milestones (release/epic groupings). Closed milestones are hidden unless include_closed=true.",
+    { project_id: z.number().int(), include_closed: z.boolean().default(false), format: FORMAT },
+    async ({ project_id, include_closed, format }) =>
+      formatList(
+        list(
+          await hp.get(`/projects/${project_id}/milestones`, { includeClosed: include_closed }),
+        ),
+        "milestones",
+        format,
+      ),
   );
 
   tool(
     "list_work_items",
-    "List/search a project's work items. Optional filters: board_id, stage_id, category_id, milestone_id. Paginated via limit/offset.",
+    "List/search a project's work items with server-side filters. All filters are optional and AND-combined: board_id, stage_id, category_id, milestone_id, importance_level_id, tag_id, design_element_id, assigned_user_id, is_story, status ('open'|'closed'), text (free-text match). Paginated via limit/offset. For a forgiving name-based search that also works if a filter is unsupported, use find_work_items.",
     {
       project_id: z.number().int(),
       board_id: z.number().int().optional(),
       stage_id: z.number().int().optional(),
       category_id: z.number().int().optional(),
       milestone_id: z.number().int().optional(),
+      importance_level_id: z.number().int().optional(),
+      tag_id: z.number().int().optional(),
+      design_element_id: z.number().int().optional(),
+      assigned_user_id: z.number().int().optional(),
+      is_story: z.boolean().optional(),
+      status: z.enum(["open", "closed"]).optional(),
+      text: z.string().optional(),
       limit: z.number().int().default(50),
       offset: z.number().int().default(0),
       format: FORMAT,
     },
-    async ({ project_id, board_id, stage_id, category_id, milestone_id, limit, offset, format }) => {
-      const params: Record<string, unknown> = { limit, offset };
-      if (board_id !== undefined) params.boardId = board_id;
-      if (stage_id !== undefined) params.stageId = stage_id;
-      if (category_id !== undefined) params.categoryId = category_id;
-      if (milestone_id !== undefined) params.milestoneId = milestone_id;
-      const resp = await hp.get(`/projects/${project_id}/workitems`, params);
-      return formatList(list(resp), "work items", format);
+    async (a) => {
+      const params: Record<string, unknown> = { limit: a.limit, offset: a.offset };
+      if (a.board_id !== undefined) params.boardId = a.board_id;
+      if (a.stage_id !== undefined) params.stageId = a.stage_id;
+      if (a.category_id !== undefined) params.categoryId = a.category_id;
+      if (a.milestone_id !== undefined) params.milestoneId = a.milestone_id;
+      if (a.importance_level_id !== undefined) params.importanceLevelId = a.importance_level_id;
+      if (a.tag_id !== undefined) params.tagId = a.tag_id;
+      if (a.design_element_id !== undefined) params.designElementId = a.design_element_id;
+      if (a.assigned_user_id !== undefined) params.assignedUsers = a.assigned_user_id;
+      if (a.is_story !== undefined) params.isStory = a.is_story;
+      if (a.status !== undefined) params.status = a.status;
+      if (a.text !== undefined) params.text = a.text;
+      const resp = await hp.get(`/projects/${a.project_id}/workitems`, params);
+      return formatList(list(resp), "work items", a.format);
     },
   );
 
@@ -212,21 +236,23 @@ export function buildServer(hp: HacknPlanClient): McpServer {
 
   tool(
     "create_stage",
-    "Create a kanban stage. status must be one of (lowercase): created | started | completed.",
+    "Create a kanban stage. status must be one of (lowercase): created | started | completed. Both color AND icon are required by the API (omitting icon returns HTTP 500); icon is a HacknPlan icon name (e.g. inbox, wrench, check, rocket, eye, ban).",
     {
       project_id: z.number().int(),
       name: z.string(),
       status: z.enum(["created", "started", "completed"]).default("created"),
       color: z.string().default("#3498db"),
+      icon: z.string().default("inbox"),
       is_unblocker: z.boolean().default(false),
     },
-    async ({ project_id, name, status, color, is_unblocker }) =>
+    async ({ project_id, name, status, color, icon, is_unblocker }) =>
       asJson(
         await hp.post(`/projects/${project_id}/stages`, {
           name,
           status,
           isUnblocker: is_unblocker,
           color,
+          icon,
         }),
       ),
   );
@@ -268,7 +294,7 @@ export function buildServer(hp: HacknPlanClient): McpServer {
 
   tool(
     "create_work_item",
-    "Create a work item (task or user story). Required: title + importance_level_id (get it from get_project/list_*). category_id is required for tasks (not user stories). sub_tasks is a list of checklist item titles. due_date is ISO 8601. If stage_id is given, the item is moved to that stage after creation (the API always creates new items in the default/first stage).",
+    "Create a work item (task or user story). Required: title + importance_level_id (get it from get_project/list_*). category_id is required for tasks (not user stories). parent_id nests this item under a user story (the story→task hierarchy). assigned_user_ids assigns members; dependency_ids makes it blocked-by those items. sub_tasks is a list of checklist item titles. due_date/start_date are ISO 8601. If stage_id is given, the item is moved to that stage after creation (the API always creates new items in the default/first stage).",
     {
       project_id: z.number().int(),
       title: z.string(),
@@ -277,9 +303,13 @@ export function buildServer(hp: HacknPlanClient): McpServer {
       description: z.string().default(""),
       estimated_cost: z.number().default(0),
       is_story: z.boolean().default(false),
+      parent_id: z.number().int().optional(),
       board_id: z.number().int().optional(),
+      start_date: z.string().default(""),
       due_date: z.string().default(""),
       tag_ids: z.array(z.number().int()).optional(),
+      assigned_user_ids: z.array(z.number().int()).optional(),
+      dependency_ids: z.array(z.number().int()).optional(),
       sub_tasks: z.array(z.string()).optional(),
       stage_id: z.number().int().optional(),
     },
@@ -292,9 +322,13 @@ export function buildServer(hp: HacknPlanClient): McpServer {
       };
       if (a.category_id !== undefined && !a.is_story) body.categoryId = a.category_id;
       if (a.description) body.description = a.description;
+      if (a.parent_id !== undefined) body.parentId = a.parent_id;
       if (a.board_id !== undefined) body.boardId = a.board_id;
+      if (a.start_date) body.startDate = a.start_date;
       if (a.due_date) body.dueDate = a.due_date;
       if (a.tag_ids?.length) body.tagIds = a.tag_ids;
+      if (a.assigned_user_ids?.length) body.assignedUserIds = a.assigned_user_ids;
+      if (a.dependency_ids?.length) body.dependencyIds = a.dependency_ids;
       if (a.sub_tasks?.length) body.subTasks = a.sub_tasks;
       let wi = (await hp.post(`/projects/${a.project_id}/workitems`, body)) as Rec;
       if (a.stage_id !== undefined) {
@@ -308,25 +342,41 @@ export function buildServer(hp: HacknPlanClient): McpServer {
 
   tool(
     "update_work_item",
-    "Partially update a work item (move stage, retitle, set due date, block, retag).",
+    "Partially update a work item: move stage, retitle, edit description, set start/due date, block/unblock, retag, re-prioritize (importance_level_id), recategorize (category_id), re-estimate (estimated_cost), move board/milestone, re-parent, or reassign (assigned_user_ids replaces the whole assignee set). Provide only the fields you want to change.",
     {
       project_id: z.number().int(),
       work_item_id: z.number().int(),
       stage_id: z.number().int().optional(),
       title: z.string().optional(),
       description: z.string().optional(),
+      start_date: z.string().optional(),
       due_date: z.string().optional(),
       is_blocked: z.boolean().optional(),
       tag_ids: z.array(z.number().int()).optional(),
+      importance_level_id: z.number().int().optional(),
+      category_id: z.number().int().optional(),
+      estimated_cost: z.number().optional(),
+      board_id: z.number().int().optional(),
+      milestone_id: z.number().int().optional(),
+      parent_id: z.number().int().optional(),
+      assigned_user_ids: z.array(z.number().int()).optional(),
     },
     async (a) => {
       const body: Rec = {};
       if (a.stage_id !== undefined) body.stageId = a.stage_id;
       if (a.title !== undefined) body.title = a.title;
       if (a.description !== undefined) body.description = a.description;
+      if (a.start_date !== undefined) body.startDate = a.start_date;
       if (a.due_date !== undefined) body.dueDate = a.due_date;
       if (a.is_blocked !== undefined) body.isBlocked = a.is_blocked;
       if (a.tag_ids !== undefined) body.tagIds = a.tag_ids;
+      if (a.importance_level_id !== undefined) body.importanceLevelId = a.importance_level_id;
+      if (a.category_id !== undefined) body.categoryId = a.category_id;
+      if (a.estimated_cost !== undefined) body.estimatedCost = a.estimated_cost;
+      if (a.board_id !== undefined) body.boardId = a.board_id;
+      if (a.milestone_id !== undefined) body.milestoneId = a.milestone_id;
+      if (a.parent_id !== undefined) body.parentId = a.parent_id;
+      if (a.assigned_user_ids !== undefined) body.assignedUserIds = a.assigned_user_ids;
       if (!Object.keys(body).length) return "Error: provide at least one field to update.";
       return asJson(await hp.patch(`/projects/${a.project_id}/workitems/${a.work_item_id}`, body));
     },
@@ -898,6 +948,374 @@ export function buildServer(hp: HacknPlanClient): McpServer {
       const data = await portfolio(hp, new Date());
       return format === "json" ? asJson(data.schedule) : toScheduleMarkdown(data);
     },
+  );
+
+  // ===================== SEARCH / QUERY / WORKFLOW HELPERS =====================
+
+  /**
+   * Page through a project's work items (the list endpoint caps each page).
+   * `extra` carries best-effort server-side filters; if the API rejects them
+   * (HTTP 400), we transparently retry without them so client-side filtering
+   * still yields a correct result.
+   */
+  async function fetchAllWorkItems(
+    pid: number,
+    extra: Record<string, unknown> = {},
+    cap = 200,
+  ): Promise<Rec[]> {
+    const pull = async (params: Record<string, unknown>): Promise<Rec[]> => {
+      const out: Rec[] = [];
+      const page = 100;
+      for (let offset = 0; offset < cap; offset += page) {
+        const batch = list(await hp.get(`/projects/${pid}/workitems`, { ...params, limit: page, offset }));
+        out.push(...batch);
+        if (batch.length < page) break;
+      }
+      return out.slice(0, cap);
+    };
+    try {
+      return await pull(extra);
+    } catch (e) {
+      if (e instanceof HacknPlanError && e.status === 400 && Object.keys(extra).length) {
+        return pull({}); // unsupported filter → fall back to client-side filtering
+      }
+      throw e;
+    }
+  }
+
+  const isClosed = (w: Rec) => ((w.stage as Rec)?.status as string) === "closed";
+  const assigneeIds = (w: Rec): number[] => {
+    const arr = (w.assignedUsers ?? w.users) as Rec[] | undefined;
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map((u) => (u.userId ?? u.id ?? (u.user as Rec)?.id) as number | undefined)
+      .filter((n): n is number => typeof n === "number");
+  };
+
+  tool(
+    "find_work_items",
+    "Search a project's work items by free text and/or facets — the name-based lookup that saves chaining list→scan→act. query matches title or description (case-insensitive). Optional facet filters: importance (level name e.g. 'Urgent'), tag (name), stage (name). status: open|closed|all (default open). Use this to resolve a task you only know by name into its id before update_work_item / move / etc.",
+    {
+      project_id: z.number().int(),
+      query: z.string().default(""),
+      importance: z.string().optional(),
+      tag: z.string().optional(),
+      stage: z.string().optional(),
+      status: z.enum(["open", "closed", "all"]).default("open"),
+      limit: z.number().int().default(25),
+      format: FORMAT,
+    },
+    async (a) => {
+      const q = a.query.trim().toLowerCase();
+      // Best-effort server-side narrowing (falls back automatically if unsupported);
+      // the client-side filter below is the source of truth either way.
+      const extra: Record<string, unknown> = {};
+      if (q) extra.text = a.query.trim();
+      if (a.status !== "all") extra.status = a.status;
+      let items = await fetchAllWorkItems(a.project_id, extra);
+      items = items.filter((w) => {
+        if (a.status === "open" && isClosed(w)) return false;
+        if (a.status === "closed" && !isClosed(w)) return false;
+        if (q) {
+          const hay = `${w.title ?? ""}\n${w.description ?? ""}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        if (a.importance && ((w.importanceLevel as Rec)?.name as string) !== a.importance)
+          return false;
+        if (a.stage && ((w.stage as Rec)?.name as string) !== a.stage) return false;
+        if (a.tag) {
+          const tags = (w.tags as Rec[]) ?? [];
+          if (!tags.some((t) => (t.name as string) === a.tag)) return false;
+        }
+        return true;
+      });
+      return formatList(items.slice(0, a.limit), "work items", a.format);
+    },
+  );
+
+  tool(
+    "my_work",
+    "List work items assigned to the authenticated user (from /users/me), optionally scoped to one project — the 'what am I working on' / standup view. By default only open items; set include_closed=true to see finished ones too. Relies on the assignee data the list endpoint returns inline.",
+    {
+      project_id: z.number().int().optional(),
+      include_closed: z.boolean().default(false),
+      format: PORTFOLIO_FMT,
+    },
+    async ({ project_id, include_closed, format }) => {
+      const me = (await hp.get("/users/me")) as Rec;
+      const myId = (me.id ?? me.userId) as number | undefined;
+      if (typeof myId !== "number") return "Error: could not determine your user id from /users/me.";
+
+      const projects =
+        project_id !== undefined
+          ? [{ id: project_id, name: `project ${project_id}` } as Rec]
+          : list(await hp.get("/projects"));
+
+      const mine: Rec[] = [];
+      for (const p of projects) {
+        const pid = p.id as number;
+        const items = await fetchAllWorkItems(pid);
+        for (const w of items) {
+          if (!include_closed && isClosed(w)) continue;
+          if (assigneeIds(w).includes(myId)) mine.push({ ...w, _project: p.name });
+        }
+      }
+      if (format === "json") return asJson(mine);
+      if (!mine.length) return "_No work items assigned to you (in scope)._";
+      const lines = [`### ${mine.length} items assigned to ${me.username ?? myId}`];
+      for (const w of mine) {
+        const stage = ((w.stage as Rec)?.name as string) ?? "?";
+        const imp = ((w.importanceLevel as Rec)?.name as string) ?? "";
+        const due = w.dueDate ? ` · due ${String(w.dueDate).slice(0, 10)}` : "";
+        lines.push(`- [${w._project}] #${w.workItemId} ${w.title}  (${stage}${imp ? `, ${imp}` : ""}${due})`);
+      }
+      return lines.join("\n");
+    },
+  );
+
+  tool(
+    "plan_feature",
+    "Break a feature down in ONE call: create a user story, then create its child tasks (parented to the story) — optionally each with its own checklist (sub_tasks). Tasks inherit importance_level_id, default_category_id, board_id and milestone_id unless overridden per task. This is the fast path for 'turn this feature into a story with tasks'. Returns the created story and tasks.",
+    {
+      project_id: z.number().int(),
+      story_title: z.string(),
+      importance_level_id: z.number().int(),
+      story_description: z.string().default(""),
+      board_id: z.number().int().optional(),
+      milestone_id: z.number().int().optional(),
+      default_category_id: z.number().int().optional(),
+      default_estimated_cost: z.number().default(0),
+      tasks: z
+        .array(
+          z.object({
+            title: z.string(),
+            category_id: z.number().int().optional(),
+            estimated_cost: z.number().optional(),
+            importance_level_id: z.number().int().optional(),
+            description: z.string().optional(),
+            sub_tasks: z.array(z.string()).optional(),
+          }),
+        )
+        .default([]),
+    },
+    async (a) => {
+      const storyBody: Rec = {
+        title: a.story_title,
+        isStory: true,
+        estimatedCost: 0,
+        importanceLevelId: a.importance_level_id,
+      };
+      if (a.story_description) storyBody.description = a.story_description;
+      if (a.board_id !== undefined) storyBody.boardId = a.board_id;
+      if (a.milestone_id !== undefined) storyBody.milestoneId = a.milestone_id;
+      const story = (await hp.post(`/projects/${a.project_id}/workitems`, storyBody)) as Rec;
+      const storyId = story.workItemId as number;
+
+      const created: Rec[] = [];
+      for (const t of a.tasks) {
+        const body: Rec = {
+          title: t.title,
+          isStory: false,
+          estimatedCost: t.estimated_cost ?? a.default_estimated_cost,
+          importanceLevelId: t.importance_level_id ?? a.importance_level_id,
+          parentId: storyId,
+        };
+        const cat = t.category_id ?? a.default_category_id;
+        if (cat !== undefined) body.categoryId = cat;
+        if (t.description) body.description = t.description;
+        if (a.board_id !== undefined) body.boardId = a.board_id;
+        if (a.milestone_id !== undefined) body.milestoneId = a.milestone_id;
+        if (t.sub_tasks?.length) body.subTasks = t.sub_tasks;
+        created.push((await hp.post(`/projects/${a.project_id}/workitems`, body)) as Rec);
+      }
+      return asJson({ story, tasks: created });
+    },
+  );
+
+  // ===================== MILESTONE / BOARD: UPDATE / DELETE =====================
+  // (RESTful PATCH/DELETE following the documented resource convention.)
+
+  tool(
+    "update_milestone",
+    "Update a milestone (rename, change due/start date, edit general info). Dates are ISO 8601.",
+    {
+      project_id: z.number().int(),
+      milestone_id: z.number().int(),
+      name: z.string().optional(),
+      due_date: z.string().optional(),
+      start_date: z.string().optional(),
+      general_info: z.string().optional(),
+    },
+    async (a) => {
+      const body: Rec = {};
+      if (a.name !== undefined) body.name = a.name;
+      if (a.due_date !== undefined) body.dueDate = a.due_date;
+      if (a.start_date !== undefined) body.startDate = a.start_date;
+      if (a.general_info !== undefined) body.generalInfo = a.general_info;
+      if (!Object.keys(body).length) return "Error: provide at least one field to update.";
+      return asJson(await hp.patch(`/projects/${a.project_id}/milestones/${a.milestone_id}`, body));
+    },
+  );
+
+  tool(
+    "delete_milestone",
+    "Delete a milestone. Destructive (work items are un-grouped, not deleted). confirm=true required.",
+    {
+      project_id: z.number().int(),
+      milestone_id: z.number().int(),
+      confirm: z.boolean().default(false),
+    },
+    async ({ project_id, milestone_id, confirm }) => {
+      if (!confirm) return "Refused: deleting a milestone is destructive. Re-call with confirm=true.";
+      await hp.delete(`/projects/${project_id}/milestones/${milestone_id}`);
+      return `Deleted milestone ${milestone_id}.`;
+    },
+  );
+
+  tool(
+    "update_board",
+    "Update a board/sprint (rename, change start/due date, description, or re-nest under a milestone). Dates are ISO 8601.",
+    {
+      project_id: z.number().int(),
+      board_id: z.number().int(),
+      name: z.string().optional(),
+      start_date: z.string().optional(),
+      due_date: z.string().optional(),
+      description: z.string().optional(),
+      milestone_id: z.number().int().optional(),
+    },
+    async (a) => {
+      const body: Rec = {};
+      if (a.name !== undefined) body.name = a.name;
+      if (a.start_date !== undefined) body.startDate = a.start_date;
+      if (a.due_date !== undefined) body.dueDate = a.due_date;
+      if (a.description !== undefined) body.description = a.description;
+      if (a.milestone_id !== undefined) body.milestoneId = a.milestone_id;
+      if (!Object.keys(body).length) return "Error: provide at least one field to update.";
+      return asJson(await hp.patch(`/projects/${a.project_id}/boards/${a.board_id}`, body));
+    },
+  );
+
+  // ===================== LIFECYCLE: CLOSE / REOPEN (non-destructive) =====================
+  // Closing archives a project/milestone/board without deleting its contents
+  // (POST .../closure to close, DELETE .../closure to reopen). Distinct from delete_*.
+
+  tool(
+    "close_project",
+    "Close (archive) a project without deleting it — its work items and history are preserved. Reverse with reopen_project.",
+    { project_id: z.number().int() },
+    async ({ project_id }) => {
+      await hp.post(`/projects/${project_id}/closure`, {});
+      return `Closed (archived) project ${project_id}.`;
+    },
+  );
+
+  tool(
+    "reopen_project",
+    "Reopen a previously closed/archived project.",
+    { project_id: z.number().int() },
+    async ({ project_id }) => {
+      await hp.delete(`/projects/${project_id}/closure`);
+      return `Reopened project ${project_id}.`;
+    },
+  );
+
+  tool(
+    "close_milestone",
+    "Close (release) a milestone — marks it done without deleting it. Reverse with reopen_milestone.",
+    { project_id: z.number().int(), milestone_id: z.number().int() },
+    async ({ project_id, milestone_id }) => {
+      await hp.post(`/projects/${project_id}/milestones/${milestone_id}/closure`, {});
+      return `Closed milestone ${milestone_id}.`;
+    },
+  );
+
+  tool(
+    "reopen_milestone",
+    "Reopen a previously closed milestone.",
+    { project_id: z.number().int(), milestone_id: z.number().int() },
+    async ({ project_id, milestone_id }) => {
+      await hp.delete(`/projects/${project_id}/milestones/${milestone_id}/closure`);
+      return `Reopened milestone ${milestone_id}.`;
+    },
+  );
+
+  tool(
+    "reopen_board",
+    "Reopen a previously closed board/sprint (counterpart to close_board).",
+    { project_id: z.number().int(), board_id: z.number().int() },
+    async ({ project_id, board_id }) => {
+      await hp.delete(`/projects/${project_id}/boards/${board_id}/closure`);
+      return `Reopened board ${board_id}.`;
+    },
+  );
+
+  // ===================== ACTIVITY / METRICS / DESIGN COMMENTS =====================
+
+  tool(
+    "recent_activity",
+    "Project activity/event feed — the 'what changed' / standup view. Returns events between `from` and `to` (ISO 8601 dates/timestamps). If `from` is omitted it defaults to 7 days ago, `to` to now. Use for 'what happened this week', 'recent changes', daily standups.",
+    {
+      project_id: z.number().int(),
+      from: z.string().optional(),
+      to: z.string().optional(),
+    },
+    async ({ project_id, from, to }) => {
+      const now = new Date();
+      const fromIso = from ?? new Date(now.getTime() - 7 * 86_400_000).toISOString();
+      const toIso = to ?? now.toISOString();
+      return asJson(
+        list(await hp.get(`/projects/${project_id}/events`, { from: fromIso, to: toIso })),
+      );
+    },
+  );
+
+  tool(
+    "get_board_metrics",
+    "Get a board's (sprint's) metrics — burndown / velocity / completion. Optionally scope to one user via user_id.",
+    { project_id: z.number().int(), board_id: z.number().int(), user_id: z.number().int().optional() },
+    async ({ project_id, board_id, user_id }) => {
+      const params: Record<string, unknown> = {};
+      if (user_id !== undefined) params.userId = user_id;
+      return asJson(await hp.get(`/projects/${project_id}/boards/${board_id}/metrics`, params));
+    },
+  );
+
+  tool(
+    "get_design_element_metrics",
+    "Get a design element's metrics (work rolled up from items linked to it). include_children rolls up its whole sub-tree.",
+    {
+      project_id: z.number().int(),
+      element_id: z.number().int(),
+      include_children: z.boolean().default(false),
+    },
+    async ({ project_id, element_id, include_children }) =>
+      asJson(
+        await hp.get(`/projects/${project_id}/designelements/${element_id}/metrics`, {
+          includeChildren: include_children,
+        }),
+      ),
+  );
+
+  tool(
+    "list_design_element_comments",
+    "List the comments/notes on a design element (design-doc discussion thread).",
+    { project_id: z.number().int(), element_id: z.number().int() },
+    async ({ project_id, element_id }) =>
+      asJson(list(await hp.get(`/projects/${project_id}/designelements/${element_id}/comments`))),
+  );
+
+  tool(
+    "add_design_element_comment",
+    "Add a comment/note to a design element (markdown supported, max 5000 chars).",
+    { project_id: z.number().int(), element_id: z.number().int(), text: z.string() },
+    async ({ project_id, element_id, text }) =>
+      asJson(
+        await hp.post(
+          `/projects/${project_id}/designelements/${element_id}/comments`,
+          text.slice(0, 5000),
+        ),
+      ),
   );
 
   return server;
