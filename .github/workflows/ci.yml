@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+
+      - name: Smoke test (initialize + tools/list over stdio)
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+          | HACKNPLAN_API_KEY=ci_fake_key node dist/cli.js serve 2>/dev/null \
+          | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const m=d.split("\n").filter(Boolean).map(JSON.parse).find(x=>x.id===2);if(!m||!m.result.tools.length){console.error("tools/list failed");process.exit(1);}console.log("OK:",m.result.tools.length,"tools");})'

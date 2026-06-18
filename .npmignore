@@ -1,0 +1,9 @@
+src/
+node_modules/
+tsconfig.json
+.github/
+.env
+*.env
+*.tsbuildinfo
+.gitignore
+.editorconfig

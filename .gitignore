@@ -1,0 +1,15 @@
+# Reference-only variant (not part of the published package)
+bitvibelabs/
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Secrets — never commit credentials
+.env
+*.env
+
+# Misc
+.DS_Store
+npm-debug.log*

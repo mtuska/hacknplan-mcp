@@ -1,0 +1,110 @@
+name: release
+
+# Triggered by pushing a semver tag like `v0.1.1`. Two phases run in sequence:
+#   1. validate            — refuse if package.json version doesn't match the tag
+#   2. publish-and-release — npm publish the package, then create the GH release
+#
+# No NPM token is needed. The publish step uses npm's OIDC-based Trusted
+# Publishing: GitHub mints a short-lived ID token (id-token: write below), npm
+# verifies it against the trusted-publisher config attached to the package on
+# npmjs.com. One-time maintainer setup:
+#   1. Publish v0.1.0 once manually (`npm publish --access public`) so the
+#      @mtuska/hacknplan-mcp name is claimed.
+#   2. On npmjs.com -> package -> "Trusted Publishers", add this repo
+#      (mtuska/hacknplan-mcp) and the workflow filename (release.yml).
+#   3. After that, every tag-driven release publishes with provenance and no
+#      long-lived token.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # to create the GitHub release
+  id-token: write   # npm Trusted Publishing (OIDC) + provenance
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Refuse to release if package.json version drifts from the tag. Stops
+  # "I tagged v0.1.1 but forgot to bump the package" mistakes that would
+  # otherwise publish stale content to npm.
+  validate:
+    name: validate tag matches package.json
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Derive expected version
+        id: derive
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          pkg=$(node -p "require('./package.json').version")
+          echo "tag=$tag pkg=$pkg"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag does not match package.json version $pkg"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  publish-and-release:
+    name: publish to npm + create GitHub release
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      # prepublishOnly in package.json runs the build, so the tarball always
+      # contains a fresh dist/. Running it here too surfaces failures before
+      # we touch npm or create a release.
+      - name: Build
+        run: npm run build
+
+      # Trusted Publishing needs a fairly recent npm — the ID-token exchange
+      # only landed in npm 11.x. Pin to latest to be safe.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      # `--access public` is required for scoped public packages. `--provenance`
+      # attaches a signed build attestation that the package came from this
+      # workflow on this commit; Trusted Publishing makes it free. Users can
+      # verify with `npm audit signatures`.
+      - name: Publish to npm (Trusted Publishing via OIDC)
+        run: npm publish --access public --provenance
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="v${{ needs.validate.outputs.version }}"
+          notes_file=$(mktemp)
+          cat >"$notes_file" <<EOF
+          # hacknplan-mcp $version
+
+          ## Install
+
+          \`\`\`
+          npx @mtuska/hacknplan-mcp@${{ needs.validate.outputs.version }} install
+          \`\`\`
+
+          A Model Context Protocol server for the HacknPlan project-management
+          API, built for Claude. See the
+          [README](https://github.com/mtuska/hacknplan-mcp#readme) for setup.
+          EOF
+          gh release create "$version" \
+            --title "$version" \
+            --notes-file "$notes_file" \
+            --verify-tag
