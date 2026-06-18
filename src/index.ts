@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 
 import { HacknPlanClient } from "./client.js";
 import { buildServer } from "./server.js";
+import { syncInstalledSkill } from "./skill.js";
 
 export async function serve(): Promise<void> {
   const apiKey = process.env.HACKNPLAN_API_KEY ?? "";
@@ -18,6 +19,10 @@ export async function serve(): Promise<void> {
     );
     process.exit(1);
   }
+
+  // Auto-update the bundled skill wherever we previously installed it. Best-effort
+  // and silent; runs before the transport so it can't interleave with stdout.
+  syncInstalledSkill();
 
   const hp = new HacknPlanClient(apiKey);
   const server = buildServer(hp);

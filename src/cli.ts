@@ -14,6 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
 import { serve } from "./index.js";
+import { installSkill, type SkillScope } from "./skill.js";
 import { VERSION } from "./version.js";
 
 const PKG_NAME = "@mtuska/hacknplan-mcp";
@@ -26,15 +27,20 @@ interface InstallOpts {
   apiKey?: string;
   name: string;
   yes: boolean;
+  skipSkill: boolean;
 }
 
 // ----------------------------- arg parsing -----------------------------
 
 function parseInstallArgs(argv: string[]): InstallOpts {
-  const opts: InstallOpts = { name: SERVER_KEY, yes: false };
+  const opts: InstallOpts = { name: SERVER_KEY, yes: false, skipSkill: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
+      case "--skip-skill":
+      case "--no-skill":
+        opts.skipSkill = true;
+        break;
       case "-g":
       case "--global":
       case "--user":
@@ -220,6 +226,19 @@ async function runInstall(argv: string[]): Promise<void> {
   }
 
   console.log(`\n✓ Registered "${opts.name}" → ${location}`);
+
+  // 4. Install the bundled Claude skill into the same scope (global → user skills,
+  //    project/local → ./.claude/skills). It auto-updates on later server launches.
+  if (!opts.skipSkill) {
+    try {
+      const res = installSkill(scope as SkillScope);
+      if (res) console.log(`✓ Installed skill "hacknplan" → ${res.dir} (auto-updates)`);
+      else console.log("• Skill source not found in this build; skipped skill install.");
+    } catch (e) {
+      console.log(`• Could not install the skill (${e instanceof Error ? e.message : e}); MCP server is still registered.`);
+    }
+  }
+
   console.log("✓ Verify the API key works by asking Claude to run the `hacknplan_whoami` tool.");
   if (scope !== "project") {
     console.log("  (Restart Claude / reload the window if it was already running.)");
@@ -237,7 +256,8 @@ Usage:
   npx ${PKG_NAME} <command> [options]
 
 Commands:
-  install     Register the server with Claude and store your HacknPlan API key.
+  install     Register the server with Claude, store your API key, and install
+              the bundled "hacknplan" Claude skill (auto-updates on later runs).
   serve       Run the MCP server over stdio (this is the default with no command).
   help        Show this help.
 
@@ -247,6 +267,7 @@ Install options:
       --local         Register for this repo only, private to you.
       --api-key KEY   Provide the API key non-interactively (else prompted / $HACKNPLAN_API_KEY).
       --name NAME     Server name to register (default: "${SERVER_KEY}").
+      --skip-skill    Don't install the Claude skill (register the MCP server only).
   -y, --yes           Non-interactive; use defaults and fail if the key is missing.
 
 Examples:

@@ -22,9 +22,24 @@ The installer will:
    repo, private to you).
 2. Prompt for your **HacknPlan API key** (input is hidden) and store it in the
    chosen Claude MCP config.
+3. Install the bundled **`hacknplan` Claude skill** into the matching skills
+   directory (global → `~/.claude/skills`, project/local → `./.claude/skills`).
 
 Then ask Claude to run the **`hacknplan_whoami`** tool to confirm the key works.
 (Restart Claude / reload the window first if it was already running.)
+
+### The bundled skill (auto-updating)
+
+`install` drops a `hacknplan` skill that teaches Claude how to drive these tools
+(id-resolution, feature breakdown, destructive-confirm rules, the portfolio /
+schedule / standup views). It's part of the npm package, so on every later
+server launch — which Claude runs via `npx -y @mtuska/hacknplan-mcp` (always the
+latest) — the server **re-syncs the skill if the package version changed**,
+keeping it current with no action from you.
+
+The refresh only touches a skill copy this package installed (tracked by a
+`.installed-by.json` marker), so your own edits to other skills are never
+affected. Pass `--skip-skill` to register the MCP server without the skill.
 
 ### Getting an API key
 
@@ -40,6 +55,7 @@ npx @mtuska/hacknplan-mcp install [options]
       --local         Register for this repo only, private to you.
       --api-key KEY   Provide the key non-interactively (else prompted / $HACKNPLAN_API_KEY).
       --name NAME     Server name to register (default: "hacknplan").
+      --skip-skill    Register the MCP server only; don't install the Claude skill.
   -y, --yes           Non-interactive; use defaults and fail if the key is missing.
 ```
 
